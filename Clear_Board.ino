@@ -1,20 +1,3 @@
-/*
-   -- testserver --
-   
-   This source code of graphical user interface 
-   has been generated automatically by RemoteXY editor.
-   To compile this code using RemoteXY library 3.1.13 or later version 
-   download by link http://remotexy.com/en/library/
-   To connect using RemoteXY mobile app by link http://remotexy.com/en/download/                   
-     - for ANDROID 4.15.01 or later version;
-     - for iOS 1.12.1 or later version;
-    
-   This source code is free software; you can redistribute it and/or
-   modify it under the terms of the GNU Lesser General Public
-   License as published by the Free Software Foundation; either
-   version 2.1 of the License, or (at your option) any later version.    
-*/
-
 //////////////////////////////////////////////
 //        RemoteXY include library          //
 //////////////////////////////////////////////
@@ -29,12 +12,18 @@
 #include<ESP32Servo.h>
 #include<Wire.h>
 #include<Adafruit_INA219.h>
+#include<HardwareSerial.h>
+#include<DFRobotDFPlayerMini.h>
+DFRobotDFPlayerMini amthanh;
+#define RXD2 16
+#define TXD2 17
+HardwareSerial mySerial(2);
 Adafruit_INA219 ina219;
 Servo edf; 
 const int edf_pin=33;
-const int in[]={27,26,12,14};
-const int ena=25;
-const int enb= 13;
+const int in[]={26,27,14,12};
+const int ena=13;
+const int enb= 25;
 int i=0;
 int speedright;
 int speedleft;
@@ -43,22 +32,26 @@ int speed;
 int coi = 4;
  int z=0;
  int oldtime=0;
-const float fullVoltage = 12.6;
-const float emptyVoltage = 9.6;
+int edf_speed;
+float emptyVoltage=14.8
+;
+float fullVoltage=16.8                          ;
+float batteryPercent;
+int lasttime=0;
 // RemoteXY connection settings 
-#define REMOTEXY_WIFI_SSID "RemoteXY"
+#define REMOTEXY_WIFI_SSID "everylau"
 #define REMOTEXY_WIFI_PASSWORD "12345678"
 #define REMOTEXY_SERVER_PORT 6377
+
 #include <RemoteXY.h>
+
+// RemoteXY GUI configuration  
 #pragma pack(push, 1)  
-uint8_t RemoteXY_CONF[] =   // 126 bytes
-  { 255,3,0,12,0,119,0,19,0,0,0,0,24,1,106,200,2,1,0,5,
-  0,5,30,4,42,42,0,164,26,31,73,83,168,11,16,4,128,9,164,36,
-  0,0,0,0,0,0,200,66,0,0,0,0,4,16,80,9,61,64,163,36,
-  71,49,51,47,47,58,0,163,37,99,0,0,0,0,0,0,122,67,0,0,
-  72,66,0,0,32,65,0,0,0,64,164,0,71,50,111,44,44,58,0,164,
-  1,135,0,0,0,0,0,0,122,67,0,0,72,66,0,0,32,65,0,0,
-  0,64,164,0,0,0 };
+uint8_t RemoteXY_CONF[] =   // 79 bytes
+  { 255,4,0,4,0,72,0,19,0,0,0,0,24,1,106,200,2,1,0,4,
+  0,5,35,5,42,42,0,164,26,31,73,71,151,14,32,4,128,9,164,36,
+  0,0,0,0,0,0,200,66,0,0,0,0,4,17,77,16,73,64,163,36,
+  2,55,95,33,13,0,2,26,31,31,79,78,0,79,70,70,0,0,0 };
   
 // this structure defines all the variables and events of your control interface 
 struct {
@@ -67,34 +60,37 @@ struct {
   int8_t doc; // from -100 to 100
   int8_t ngang; // from -100 to 100
   int8_t edf_control; // from 0 to 100
+  uint8_t auto_mode; // =1 if switch ON and =0 if OFF
 
     // output variables
   float pin; // from 0 to 100
-  float motor_speed; // from 0 to 250
-  float motor_speed1; // from 0 to 250
 
     // other variable
   uint8_t connect_flag;  // =1 if wire connected, else =0
 
 } RemoteXY;   
 #pragma pack(pop)
-
+ 
+ 
 /////////////////////////////////////////////
 //           END RemoteXY include          //
 /////////////////////////////////////////////
 
 
+
 void setup() 
-{
+{ 
   Serial.begin(9600);
-  Wire.begin(21, 22);
+  // Wire.begin(21, 22);
   RemoteXY_Init (); 
-  edf.attach(edf_pin,1000,2000);
-  edf.write(0);
+ 
   for(int i=0;i<4;i++){pinMode(in[i],OUTPUT);}
   ledcAttach(ena,1000,8);
   ledcAttach(enb,1000,8);
   pinMode(coi,OUTPUT);
+  edf.attach(edf_pin,1000,2000);
+  edf.write(0);
+  delay(1000);
     
 
   if (!ina219.begin()) {
@@ -105,6 +101,20 @@ void setup()
   Serial.println("INA219 đã sẵn sàng!");
   // TODO you setup code
   z=1;
+   mySerial.begin(9600, SERIAL_8N1, RXD2, TXD2); 
+
+   Serial.println("Khởi động DFPlayer Mini...");
+    
+    if (!amthanh.begin(mySerial)) {
+        Serial.println("Không tìm thấy DFPlayer Mini. Kiểm tra kết nối!");
+        while (true);  // Dừng chương trình nếu không tìm thấy module
+    }
+
+    Serial.println("DFPlayer Mini đã sẵn sàng!");
+    amthanh.volume(30);  // Cài đặt âm lượng (0 - 30)
+    delay(3000);
+    amthanh.play(5);
+
 }
 
 void loop() 
@@ -116,28 +126,41 @@ void loop()
   Serial.print("Điện áp Bus: ");
   Serial.print(busVoltage);
   Serial.print("  ");
-   float batteryPercent = ((busVoltage - emptyVoltage) / (fullVoltage - emptyVoltage)) * 100.0;
+   batteryPercent = ((busVoltage - emptyVoltage) / (fullVoltage - emptyVoltage)) * 100.0;
     batteryPercent = constrain(batteryPercent, 0, 100);
+    Serial.print(batteryPercent);
+     Serial.print("      ");
     if(millis()-oldtime>1000){
       RemoteXY.pin=batteryPercent;
+       
       oldtime=millis();
     }
     if(batteryPercent<30){
-      digitalWrite(coi,1);
-    } 
-    else 
-    {
-      digitalWrite(coi,0);
+      if((millis()-lasttime>5500)&&RemoteXY.auto_mode==1)
+      {
+        amthanh.play(6);
+        lasttime=millis();
 
+      }
+    } 
     }
-  }
   else{
     Serial.println("Vô hiệu hóa đo pin");
   }
-    int edf_speed=map(RemoteXY.edf_control,0,100,0,180);
+// if(RemoteXY.edf_mode){
+//    edf_speed=map(RemoteXY.edf_control,0,100,0,180);
+//     edf.write(edf_speed);
+//     Serial.print(edf_speed);
+//      Serial.print("      ");
+// }else {edf.write(0);}
+    edf_speed=map(RemoteXY.edf_control,0,100,0,180);
     edf.write(edf_speed);
-  
+    Serial.print(edf_speed);
+     Serial.print("      ");
   speed=map(RemoteXY.doc,-100,100,-255,255);
+  Serial.print("    ");
+  Serial.print(RemoteXY.doc);
+  Serial.print("    ");
   speedx=map(RemoteXY.ngang,-100,100,255,-255);
  /*Serial.print(speed);
  Serial.print("t       ");
@@ -167,8 +190,6 @@ Serial.print(speedleft);
   // use the RemoteXY structure for data transfer
   // do not call delay(), use instead RemoteXY_delay() 
  
-RemoteXY.motor_speed=map(speedleft,0,255,0,250);
-RemoteXY.motor_speed1=map(speedright,0,255,0,250);
 RemoteXY_delay(10);
 }
 void tien()
@@ -196,3 +217,12 @@ void control_speed()
    speedleft=constrain(speed+speedx,0,255);
   
 }
+// void auto_mode(){
+//  if(cb==0)
+//  {
+//   lui();
+//   RemoteXY_delay(1000);
+//  }
+ 
+
+// }
